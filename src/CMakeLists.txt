@@ -19,14 +19,17 @@ set(CLANG_TOOL_SRC
         
         transformer/transformer.cc
         transformer/functioncalltransformer.cc
+        transformer/catchbyreferencetransformer.cc
         
         finder/finder.cc
         finder/integervariablefinder.cc
+        finder/catchbyvaluefinder.cc
+        finder/unusedparameterfinder.cc
 )
 
 # remove trailing whitespaces
 string(STRIP ${LLVM_LDFLAGS} LLVM_LDFLAGS)
 
 add_executable(clang-tool ${CLANG_TOOL_SRC})
-target_link_libraries(clang-tool ${CLANG_LIBS} ${LLVM_LIBS_CORE} ${LLVM_LDFLAGS})
+target_link_libraries(clang-tool ${CLANG_LIBS} ${LLVM_LIBS_CORE} ${LLVM_LDFLAGS} stdc++fs pthread)
 

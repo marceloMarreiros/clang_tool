@@ -8,7 +8,6 @@
 
 #include "actions/frontendaction.h"
 #include "utils/utils.h"
-#include "finder/unusedparameterfinder.h"
 
 #include <string>
 
@@ -18,13 +17,21 @@ using namespace clang;
 using namespace clang::tooling;
 namespace fs = std::filesystem;
 
-void processFile(const string &filePath, CommonOptionsParser &optionsParser, const char *argv0, const string &directory) {
+bool fileContainsCatch(const string &filePath) {
+    std::ifstream file(filePath);
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.find("catch") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void processFile(const string &filePath, CommonOptionsParser &optionsParser, const char *argv0) {
     if (!utils::fileExists(filePath)) {
         llvm::errs() << "File: " << filePath << " does not exist!\n";
         return;
-    } 
-    else {
-        llvm::outs() << "Processing file: " << filePath << "\n";
     }
 
     auto sourcetxt = utils::getSourceCode(filePath);
@@ -32,15 +39,21 @@ void processFile(const string &filePath, CommonOptionsParser &optionsParser, con
 
     std::vector<std::string> compileArgs = utils::getCompileArgs(compileCommands);
     compileArgs.push_back("-I" + utils::getClangBuiltInIncludePath(argv0));
+    // for (auto &s : compileArgs)
+    //     llvm::outs() << s << "\n";
 
-    auto xfrontendAction = std::make_unique<XFrontendAction>(directory);
+    auto xfrontendAction = std::make_unique<XFrontendAction>();
     utils::customRunToolOnCodeWithArgs(move(xfrontendAction), sourcetxt, compileArgs, filePath);
 }
 
-void processDirectory(const string &directory, CommonOptionsParser &optionsParser, const char *argv0) {
+void processDirectory(const string &directory, CommonOptionsParser &optionsParser, const char *argv0, int &totalFiles, int &filesWithCatch, vector<string> &filesToProcess) {
     for (const auto &entry : fs::recursive_directory_iterator(directory)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".cpp") {
-            processFile(entry.path().string(), optionsParser, argv0, directory);
+        if (entry.is_regular_file() && (entry.path().extension() == ".cc" || entry.path().extension() == ".cpp")) {
+            totalFiles++;
+            if (fileContainsCatch(entry.path().string())) {
+                filesWithCatch++;
+                filesToProcess.push_back(entry.path().string());
+            }
         }
     }
 }
@@ -48,7 +61,7 @@ void processDirectory(const string &directory, CommonOptionsParser &optionsParse
 int main(int argc, const char **argv) {
     // Print a start message
     cout << "========================================" << endl;
-    cout << " Starting Unused Parameter Checker" << endl;
+    cout << " Starting Catch By Reference Transformer" << endl;
     cout << "========================================" << endl;
 
     auto start = chrono::high_resolution_clock::now();
@@ -61,32 +74,47 @@ int main(int argc, const char **argv) {
     }
 
     CommonOptionsParser &optionsParser = expectedParser.get();
-    if (argc < 2) {
-        llvm::errs() << "Usage: " << argv[0] << " <directory>\n";
-        return -1;
-    }
-
-    std::string directory = argv[1];
-
-    // UnusedParameterFinder finder(optionsParser.getCompilations().getASTContext(), directory);
+    int totalFiles = 0;
+    int filesWithCatch = 0;
+    vector<string> filesToProcess;
 
     for (auto &sourcePath : optionsParser.getSourcePathList()) {
-        fs::path sourcePathFs(sourcePath);
-        if (fs::exists(sourcePathFs)) {
-            if (fs::is_directory(sourcePathFs)) {
-                llvm::outs() << "Analyzing directory: " << sourcePathFs << "\n";
-                processDirectory(sourcePath, optionsParser, argv[0]);
-            } else if (fs::is_regular_file(sourcePathFs) && sourcePathFs.extension() == ".cpp") {
-                llvm::outs() << "Accessing file: " << sourcePathFs << "\n";
-                processFile(sourcePath, optionsParser, argv[0], sourcePathFs.parent_path().string());
+        if (fs::exists(sourcePath)) {
+            if (fs::is_directory(sourcePath)) {
+                processDirectory(sourcePath, optionsParser, argv[0], totalFiles, filesWithCatch, filesToProcess);
+            } else if (fs::is_regular_file(sourcePath)) {
+                totalFiles++;
+                if (fileContainsCatch(sourcePath)) {
+                    filesWithCatch++;
+                    filesToProcess.push_back(sourcePath);
+                }
             } else {
-                llvm::errs() << "Path: " << sourcePath << " is not a valid .cpp file or directory!\n";
+                llvm::errs() << "Path: " << sourcePath << " is not a valid file or directory!\n";
                 return -1;
             }
         } else {
             llvm::errs() << "Path: " << sourcePath << " does not exist!\n";
             return -1;
         }
+    }
+
+    // Show the user the percentage of files that have catch
+    if (totalFiles > 0) {
+        double percentage = (static_cast<double>(filesWithCatch) / totalFiles) * 100;
+        cout << "Total .cpp and .cc files: " << totalFiles << endl;
+        cout << "Files with 'catch': " << filesWithCatch << endl;
+        cout << "Percentage of files with 'catch': " << percentage << "%" << endl;
+    } else {
+        cout << "No .cpp or .cc files found." << endl;
+    }
+
+    // Process only the files that contain 'catch'
+    if (filesWithCatch > 0) {
+        for (const auto &file : filesToProcess) {
+            processFile(file, optionsParser, argv[0]);
+        }
+    } else {
+        cout << "No files with 'catch' statements found." << endl;
     }
 
     auto end = chrono::high_resolution_clock::now();
@@ -99,9 +127,8 @@ int main(int argc, const char **argv) {
     auto seconds = chrono::duration_cast<chrono::seconds>(duration);
 
     cout << "========================================" << endl;
-    cout << " Unused Parameter Checker completed" << endl;
+    cout << " Catch By Reference Transformer completed" << endl;
     cout << "========================================" << endl;
-    // cout << "Total unused parameters found: " << finder.getUnusedParameterCount() << endl;
     cout << "Execution time: " << hours.count() << " hours "
          << minutes.count() << " minutes "
          << seconds.count() << " seconds" << endl;
